@@ -1,4 +1,4 @@
-# app.py - AI選股系統 Streamlit 網站程式碼 (V22: 修正 SyntaxError)
+# app.py - AI選股系統 Streamlit 網站程式碼 (V23: 修正 BBU KeyError & 產業清單精簡)
 
 # -----------------------------------------------------------
 # 步驟 1: 匯入必要的套件 (Streamlit 與分析套件)
@@ -26,6 +26,8 @@ STOCK_NAMES_MAP = {
     '2881': '富邦金', '2882': '國泰金', '2884': '玉山金', '2885': '元大金', '2886': '兆豐金', 
     '2887': '台新金', '2888': '新光金', '2891': '中信金', '5871': '中租-KY', '5880': '合庫金',
     '2801': '彰銀', '2834': '臺企銀', '2838': '聯邦銀', '2892': '第一金', '2890': '永豐金',
+    '2337': '旺宏', '2344': '華邦電', '3006': '晶豪科', '3260': '威剛', # 記憶體/硬碟相關
+    '2454': '聯發科', '3034': '聯詠', '4968': '立積', '6415': '矽力-KY', '3532': '台勝科', # 半導體相關
 }
     
 # V18 基礎：最大化選股池 (約 1000 檔) 作為'全部'選項的基礎清單
@@ -95,15 +97,15 @@ ALL_STOCKS_V18 = [
     '4984.TW', '4985.TW', '4987.TW', '4989.TW', '4991.TW', '4994.TW', '4995.TW', '4999.TW'
 ] # 約 1000 檔股票代碼清單 (作為基礎池)
 
-# V19: 產業分類清單 (手動定義，涵蓋低價股可能性較高的股票)
+# V23: 產業分類清單 (根據使用者要求精簡)
 INDUSTRY_MAP = {
     '全部 (約 1000 檔)': ALL_STOCKS_V18,
-    '半導體': ['2303.TW', '3711.TW', '5483.TW', '6271.TW', '6531.TW', '4968.TW', '2344.TW', '3034.TW', '4919.TW', '6230.TW', '6147.TW', '3532.TW', '3596.TW', '4938.TW', '6269.TW', '3026.TW', '3257.TW', '3260.TW', '3311.TW', '3406.TW'],
-    'AI/電子代工': ['3231.TW', '2324.TW', '2353.TW', '2357.TW', '2377.TW', '2409.TW', '3014.TW', '3023.TW', '3045.TW', '2371.TW', '2362.TW', '3051.TW', '3209.TW', '3229.TW', '3494.TW', '6176.TW', '6214.TW', '6227.TW', '6235.TW'],
-    '金融/保險': ['2881.TW', '2882.TW', '2886.TW', '2888.TW', '2891.TW', '2892.TW', '2801.TW', '2834.TW', '2845.TW', '2880.TW', '2809.TW', '2812.TW', '2816.TW', '2820.TW', '2836.TW', '2838.TW', '2845.TW', '2856.TW', '2867.TW', '2884.TW', '2885.TW', '2887.TW', '2890.TW'],
-    '鋼鐵/水泥': ['2002.TW', '1101.TW', '1102.TW', '2014.TW', '2023.TW', '2049.TW', '1308.TW', '1402.TW', '2501.TW', '2538.TW', '2542.TW', '2545.TW', '2606.TW'],
-    '航運/觀光': ['2603.TW', '2609.TW', '2610.TW', '2618.TW', '2637.TW', '2640.TW', '2705.TW', '2707.TW', '2723.TW', '2731.TW', '2611.TW', '2612.TW', '2613.TW', '2614.TW'],
-    '塑化/生技': ['1301.TW', '1303.TW', '1314.TW', '1710.TW', '6505.TW', '1711.TW', '1718.TW', '1723.TW', '4104.TW', '4105.TW', '4106.TW', '4107.TW', '4108.TW', '4111.TW', '4120.TW', '4123.TW', '4126.TW']
+    # 1. 半導體
+    '半導體': ['2303.TW', '2330.TW', '2454.TW', '3711.TW', '5483.TW', '6271.TW', '6531.TW', '3034.TW', '4968.TW', '3532.TW', '6415.TW'],
+    # 2. AI/電子代工 (與 AI 概念相關的電子製造)
+    'AI': ['3231.TW', '2317.TW', '2353.TW', '2357.TW', '2377.TW', '2409.TW', '2324.TW', '3014.TW', '3023.TW', '3045.TW', '2371.TW', '2362.TW', '6176.TW', '6214.TW'],
+    # 3. 記憶體/硬碟
+    '記憶體/硬碟': ['2337.TW', '2344.TW', '3006.TW', '3260.TW', '3008.TW', '2498.TW'],
 }
 MAX_SCORE = 1.00 # 模型最高總分 (用於轉換為 100 分制)
 
@@ -113,7 +115,7 @@ def get_and_prepare_data(start_date, end_date, stocks):
     
     final_data_list = []
     
-    # V22 修正: 將 f-string 內的單引號改為雙引號
+    # V22 修正: 將 f-string 內的單引號改為雙引號 (已完成)
     st.warning(f'⚡ 正在從 {len(stocks)} 檔股票下載歷史K線。請耐心等待... (如果選擇 "全部"，約 1-3 分鐘)')
     
     for stock_id in stocks:
@@ -129,14 +131,14 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df.columns = df.columns.str.replace(' ', '')
             df.index.name = 'date'
             df = df.reset_index()
-            df['stock_id'] = stock_id
+            df['stock_id_full'] = stock_id # 保留完整代碼, 避免與 stock_code 混淆
             df['stock_code'] = stock_id.split('.')[0]
             
             # 1. 計算技術指標
             df.ta.rsi(close='Close', append=True)
             df.ta.macd(close='Close', append=True)
             df.ta.stoch(close='Close', append=True) 
-            # 注意：這裡使用 length=14, std=2.0，所以欄位名稱是 BBU_14_2.0
+            # V23 修正: 布林通道長度改為 14, 欄位名稱應為 BBU_14_2.0, BBL_14_2.0 等
             df.ta.bbands(close='Close', length=14, std=2.0, append=True) 
             df['Volume_MA20'] = df['Volume'].rolling(window=20).mean()
             df['Vol_Ratio'] = df['Volume'] / df['Volume_MA20']
@@ -163,9 +165,8 @@ def run_simple_momentum_model(input_data):
         
     df = input_data.copy()
     
-    # V21 修正：動態獲取布林通道上軌欄位名稱，避免 KeyError
-    bb_cols = [col for col in df.columns if col.startswith('BBU_')]
-    bb_upper_band = bb_cols[0] if bb_cols else None
+    # V23 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
+    bb_upper_band = 'BBU_14_2.0'
     
     df['Score_MACD'] = 0.0
     df['Score_KDJ_Cross'] = 0.0
@@ -191,7 +192,8 @@ def run_simple_momentum_model(input_data):
     df['Score_Volume'] = np.where(df['Vol_Ratio'] > 1.0, 0.15, 0)
     
     # 5. 波動率擴張 (股價突破布林通道上軌) - 0.15
-    if bb_upper_band:
+    # V23 修正: 使用明確定義的 bb_upper_band='BBU_14_2.0' 來避免 KeyError
+    if bb_upper_band in df.columns:
         df['Score_BB_Breakout'] = np.where(df['Close'] > df[bb_upper_band], 0.15, 0)
     
     # 6. 反彈潛力 (RSI 超賣) - 0.05
@@ -220,8 +222,8 @@ def run_simple_momentum_model(input_data):
     # 篩選分數大於 0 的股票
     top_stocks = top_stocks[top_stocks['AI_Score'] > 0]
     
-    # V20 修正：只選擇 stock_code (不帶.TW)，確保最終輸出只包含股票代碼
-    final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由']]
+    # V23 修正：確保選取 'stock_code' 和 'stock_id_full' 避免欄位遺失
+    final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由', 'stock_id_full']]
     
     # 增加中文名稱欄位
     final_recommendations['股票名稱'] = final_recommendations['stock_code'].apply(
@@ -231,11 +233,11 @@ def run_simple_momentum_model(input_data):
     return final_recommendations
 
 # -----------------------------------------------------------
-# 步驟 3: Streamlit 網頁主體 (V22 介面更新)
+# 步驟 3: Streamlit 網頁主體 (V23 介面更新)
 # -----------------------------------------------------------
 def main():
     st.set_page_config(page_title='AI 短期波段選股系統', layout='wide')
-    st.title('📈 AI 短期波段選股系統 (V22: 錯誤修正 & 產業篩選)')
+    st.title('📈 AI 短期波段選股系統 (V23: 修正錯誤 & 產業清單精簡)')
     st.markdown(f'**分析模型:** 短線動能強化模型 (KDJ, BBANDS, MACD, RSI, Vol) | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
     # --- 產業篩選下拉選單 ---
@@ -284,8 +286,10 @@ def main():
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE_VALUE
     
     # 2. 調整輸出順序和欄位名稱 (股票代碼, 股票名稱, ...)
-    final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
+    # V23 修正：加入 'stock_id_full' (原 stock_id.TW) 作為輸出第一欄位，並將 'stock_code' (純代碼) 作為第二欄
+    final_recommendations = final_recommendations[['stock_id_full', 'stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
+        'stock_id_full': 'stock_id (完整代碼)',
         'stock_code': '股票代碼',
         'Close': '當日收盤價 (元)', 
         'AI_Score': '分析分數'
@@ -302,6 +306,7 @@ def main():
     else:
         stocks_under_price_limit = len(processed_data)
         st.info(f'在 {selected_industry} 中，股價 ≤ {PRICE_LIMIT} 元的 {stocks_under_price_limit} 檔股票裡，篩選出以下 Top 5。')
+        # 隱藏 index 並使用 use_container_width
         st.dataframe(final_recommendations, use_container_width=True, hide_index=True)
 
     # 更新備註說明
