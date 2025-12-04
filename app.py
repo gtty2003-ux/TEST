@@ -1,4 +1,4 @@
-# app.py - AI選股系統 Streamlit 網站程式碼 (V20: 修正中文名稱顯示與欄位)
+# app.py - AI選股系統 Streamlit 網站程式碼 (V22: 修正 SyntaxError)
 
 # -----------------------------------------------------------
 # 步驟 1: 匯入必要的套件 (Streamlit 與分析套件)
@@ -113,7 +113,8 @@ def get_and_prepare_data(start_date, end_date, stocks):
     
     final_data_list = []
     
-    st.warning(f'⚡ 正在從 {len(stocks)} 檔股票下載歷史K線。請耐心等待... (如果選擇 '全部'，約 1-3 分鐘)')
+    # V22 修正: 將 f-string 內的單引號改為雙引號
+    st.warning(f'⚡ 正在從 {len(stocks)} 檔股票下載歷史K線。請耐心等待... (如果選擇 "全部"，約 1-3 分鐘)')
     
     for stock_id in stocks:
         try:
@@ -135,6 +136,7 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df.ta.rsi(close='Close', append=True)
             df.ta.macd(close='Close', append=True)
             df.ta.stoch(close='Close', append=True) 
+            # 注意：這裡使用 length=14, std=2.0，所以欄位名稱是 BBU_14_2.0
             df.ta.bbands(close='Close', length=14, std=2.0, append=True) 
             df['Volume_MA20'] = df['Volume'].rolling(window=20).mean()
             df['Vol_Ratio'] = df['Volume'] / df['Volume_MA20']
@@ -161,7 +163,7 @@ def run_simple_momentum_model(input_data):
         
     df = input_data.copy()
     
-    # V15 修正：動態獲取 BBANDS 欄位名稱 (保留此處修正)
+    # V21 修正：動態獲取布林通道上軌欄位名稱，避免 KeyError
     bb_cols = [col for col in df.columns if col.startswith('BBU_')]
     bb_upper_band = bb_cols[0] if bb_cols else None
     
@@ -229,11 +231,11 @@ def run_simple_momentum_model(input_data):
     return final_recommendations
 
 # -----------------------------------------------------------
-# 步驟 3: Streamlit 網頁主體 (V19 介面更新)
+# 步驟 3: Streamlit 網頁主體 (V22 介面更新)
 # -----------------------------------------------------------
 def main():
     st.set_page_config(page_title='AI 短期波段選股系統', layout='wide')
-    st.title('📈 AI 短期波段選股系統 (V20: 產業篩選 & 名稱修正)')
+    st.title('📈 AI 短期波段選股系統 (V22: 錯誤修正 & 產業篩選)')
     st.markdown(f'**分析模型:** 短線動能強化模型 (KDJ, BBANDS, MACD, RSI, Vol) | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
     # --- 產業篩選下拉選單 ---
@@ -282,7 +284,6 @@ def main():
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE_VALUE
     
     # 2. 調整輸出順序和欄位名稱 (股票代碼, 股票名稱, ...)
-    # 注意：這裡已移除 stock_id, 確保不再顯示帶.TW的代碼
     final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
         'stock_code': '股票代碼',
