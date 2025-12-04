@@ -1,4 +1,4 @@
-# app.py - AI選股系統 Streamlit 網站程式碼 (V23: 修正 BBU KeyError & 產業清單精簡)
+# app.py - AI選股系統 Streamlit 網站程式碼 (V24: 輸出欄位精簡)
 
 # -----------------------------------------------------------
 # 步驟 1: 匯入必要的套件 (Streamlit 與分析套件)
@@ -115,7 +115,6 @@ def get_and_prepare_data(start_date, end_date, stocks):
     
     final_data_list = []
     
-    # V22 修正: 將 f-string 內的單引號改為雙引號 (已完成)
     st.warning(f'⚡ 正在從 {len(stocks)} 檔股票下載歷史K線。請耐心等待... (如果選擇 "全部"，約 1-3 分鐘)')
     
     for stock_id in stocks:
@@ -131,14 +130,13 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df.columns = df.columns.str.replace(' ', '')
             df.index.name = 'date'
             df = df.reset_index()
-            df['stock_id_full'] = stock_id # 保留完整代碼, 避免與 stock_code 混淆
+            # V24 修正: 移除 stock_id_full，只保留 stock_code (純代碼)
             df['stock_code'] = stock_id.split('.')[0]
             
             # 1. 計算技術指標
             df.ta.rsi(close='Close', append=True)
             df.ta.macd(close='Close', append=True)
             df.ta.stoch(close='Close', append=True) 
-            # V23 修正: 布林通道長度改為 14, 欄位名稱應為 BBU_14_2.0, BBL_14_2.0 等
             df.ta.bbands(close='Close', length=14, std=2.0, append=True) 
             df['Volume_MA20'] = df['Volume'].rolling(window=20).mean()
             df['Vol_Ratio'] = df['Volume'] / df['Volume_MA20']
@@ -165,7 +163,7 @@ def run_simple_momentum_model(input_data):
         
     df = input_data.copy()
     
-    # V23 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
+    # V23/V24 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
     bb_upper_band = 'BBU_14_2.0'
     
     df['Score_MACD'] = 0.0
@@ -192,7 +190,6 @@ def run_simple_momentum_model(input_data):
     df['Score_Volume'] = np.where(df['Vol_Ratio'] > 1.0, 0.15, 0)
     
     # 5. 波動率擴張 (股價突破布林通道上軌) - 0.15
-    # V23 修正: 使用明確定義的 bb_upper_band='BBU_14_2.0' 來避免 KeyError
     if bb_upper_band in df.columns:
         df['Score_BB_Breakout'] = np.where(df['Close'] > df[bb_upper_band], 0.15, 0)
     
@@ -222,8 +219,8 @@ def run_simple_momentum_model(input_data):
     # 篩選分數大於 0 的股票
     top_stocks = top_stocks[top_stocks['AI_Score'] > 0]
     
-    # V23 修正：確保選取 'stock_code' 和 'stock_id_full' 避免欄位遺失
-    final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由', 'stock_id_full']]
+    # V24 修正：只選取純代碼 stock_code，確保欄位簡潔
+    final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由']]
     
     # 增加中文名稱欄位
     final_recommendations['股票名稱'] = final_recommendations['stock_code'].apply(
@@ -233,11 +230,11 @@ def run_simple_momentum_model(input_data):
     return final_recommendations
 
 # -----------------------------------------------------------
-# 步驟 3: Streamlit 網頁主體 (V23 介面更新)
+# 步驟 3: Streamlit 網頁主體 (V24 介面更新)
 # -----------------------------------------------------------
 def main():
     st.set_page_config(page_title='AI 短期波段選股系統', layout='wide')
-    st.title('📈 AI 短期波段選股系統 (V23: 修正錯誤 & 產業清單精簡)')
+    st.title('📈 AI 短期波段選股系統 (V24: 精簡輸出 & 產業清單修正)')
     st.markdown(f'**分析模型:** 短線動能強化模型 (KDJ, BBANDS, MACD, RSI, Vol) | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
     # --- 產業篩選下拉選單 ---
@@ -285,11 +282,10 @@ def main():
     # 1. 轉換分數為 100 分制 (基於 MAX_SCORE 1.00)
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE_VALUE
     
-    # 2. 調整輸出順序和欄位名稱 (股票代碼, 股票名稱, ...)
-    # V23 修正：加入 'stock_id_full' (原 stock_id.TW) 作為輸出第一欄位，並將 'stock_code' (純代碼) 作為第二欄
-    final_recommendations = final_recommendations[['stock_id_full', 'stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
+    # 2. 調整輸出順序和欄位名稱
+    # V24 修正：只保留必要的欄位，並確保 '股票名稱' 欄位在 '股票代碼' 之後
+    final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
-        'stock_id_full': 'stock_id (完整代碼)',
         'stock_code': '股票代碼',
         'Close': '當日收盤價 (元)', 
         'AI_Score': '分析分數'
