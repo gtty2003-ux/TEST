@@ -45,11 +45,12 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df['stock_id'] = stock_id
             df['stock_code'] = stock_id.split('.')[0]
             
-            # 1. 計算技術指標 (V13: 新增 KDJ, BBANDS)
+            # 1. 計算技術指標 (V14: 明確指定 BBANDS 週期為 20)
             df.ta.rsi(close='Close', append=True)
             df.ta.macd(close='Close', append=True)
-            df.ta.stoch(close='Close', append=True) # KDJ (Stochastics)
-            df.ta.bbands(close='Close', append=True) # 布林通道
+            df.ta.stoch(close='Close', append=True) 
+            # 修正: 為了讓 BBANDS 欄位名稱與模型呼叫一致，指定週期為 20 (與預設相同，但可確保名稱穩定)
+            df.ta.bbands(close='Close', length=20, std=2.0, append=True) 
             df['Volume_MA20'] = df['Volume'].rolling(window=20).mean()
             df['Vol_Ratio'] = df['Volume'] / df['Volume_MA20']
             
@@ -75,26 +76,26 @@ def run_simple_momentum_model(input_data):
     df = input_data.copy()
     
     # ----------------------------------------------------------------
-    # V13: 短線動能模型權重 (總分 1.00)
+    # V14: 短線動能模型權重 (總分 1.00) - 權重與 V13 相同，但修正了欄位名稱
     # ----------------------------------------------------------------
     
-    # 1. 趨勢確認 (MACD > 0)
+    # 1. 趨勢確認 (MACD > 0) - 0.20
     df['Score_MACD'] = np.where(df['MACDh_12_26_9'] > 0, 0.20, 0)
     
-    # 2. 短線發動點 (KDJ 金叉: K 上穿 D)
-    # 使用前一日的 K, D 值判斷趨勢是否反轉向上，但這裡只使用當日 K > D 且 D < 50 作為動能啟動信號
+    # 2. 短線發動點 (KDJ 金叉: K > D 且 D < 50) - 0.25
     df['Score_KDJ_Cross'] = np.where((df['STOCHk_14_3_3'] > df['STOCHd_14_3_3']) & (df['STOCHd_14_3_3'] < 50), 0.25, 0)
     
-    # 3. 強勢區間 (RSI 50~70)
+    # 3. 強勢區間 (RSI 50~70) - 0.20
     df['Score_RSI_Strong'] = np.where((df['RSI_14'] > 50) & (df['RSI_14'] < 70), 0.20, 0)
     
-    # 4. 成交量動能 (Vol > MA20)
+    # 4. 成交量動能 (Vol > MA20) - 0.15
     df['Score_Volume'] = np.where(df['Vol_Ratio'] > 1.0, 0.15, 0)
     
-    # 5. 波動率擴張 (股價突破布林通道上軌)
-    df['Score_BB_Breakout'] = np.where(df['Close'] > df['BBU_5_2.0'], 0.15, 0)
+    # 5. 波動率擴張 (股價突破布林通道上軌) - 0.15
+    # 修正: 使用 BBANDS(length=20, std=2.0) 的正確欄位名稱 BBU_20_2.0
+    df['Score_BB_Breakout'] = np.where(df['Close'] > df['BBU_20_2.0'], 0.15, 0)
     
-    # 6. 反彈潛力 (RSI 超賣)
+    # 6. 反彈潛力 (RSI 超賣) - 0.05
     df['Score_RSI_Oversold'] = np.where(df['RSI_14'] < 30, 0.05, 0)
     
     # 計算總分
@@ -160,11 +161,11 @@ def main():
 
     st.header('🏆 本日 Top 5 推薦清單')
     
-    # --- V13 核心修正 ---
+    # --- V14 核心修正 ---
     # 1. 轉換分數為 100 分制 (基於 MAX_SCORE 1.00)
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE
     
-    # 2. 調整輸出順序和欄位名稱 (使用 stock_code 作為 '股票代碼')
+    # 2. 調整輸出順序和欄位名稱
     final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
         'stock_code': '股票代碼',
@@ -177,10 +178,10 @@ def main():
     final_recommendations['分析分數'] = final_recommendations['分析分數'].apply(lambda x: f'{x:.1f}')
     # --------------------
 
-    # 使用 Streamlit 顯示表格 (hide_index=True 隱藏左側數字索引)
+    # 使用 Streamlit 顯示表格
     st.dataframe(final_recommendations, use_container_width=True, hide_index=True)
 
-    # 更新備註說明以符合 100 分制和新模型
+    # 更新備註說明
     markdown_notes = (
         '---\n'
         '**備註說明:**\n'
