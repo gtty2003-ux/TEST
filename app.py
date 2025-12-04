@@ -1,4 +1,4 @@
-# app.py - AI選股系統 Streamlit 網站程式碼 (V25: 擴充中文名稱對應表)
+# app.py - AI選股系統 Streamlit 網站程式碼 (V26: 擴充中文名稱對應表)
 
 # -----------------------------------------------------------
 # 步驟 1: 匯入必要的套件 (Streamlit 與分析套件)
@@ -30,13 +30,16 @@ STOCK_NAMES_MAP = {
     '2337': '旺宏', '2344': '華邦電', '3006': '晶豪科', '3260': '威剛', 
     # 半導體相關
     '2454': '聯發科', '3034': '聯詠', '4968': '立積', '6415': '矽力-KY', '3532': '台勝科', 
-    # V25 擴充：加入近期出現但名稱錯誤的股票代碼 (錸德、鈺創、緯軟、怡華、大東、大億)
+    # V25 擴充：加入近期出現但名稱錯誤的股票代碼 (錸德、盛達、映泰、集盛、福懋、和鑫)
     '2349': '錸德', 
     '3027': '盛達', 
     '2399': '映泰', 
     '1455': '集盛', 
     '1434': '福懋', 
     '3049': '和鑫', 
+    # V26 擴充：加入最新出現但名稱錯誤的股票代碼 (大同、所羅門)
+    '2371': '大同', 
+    '2362': '所羅門', 
 }
     
 # V18 基礎：最大化選股池 (約 1000 檔) 作為'全部'選項的基礎清單
@@ -171,7 +174,7 @@ def run_simple_momentum_model(input_data):
         
     df = input_data.copy()
     
-    # V23/V24/V25 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
+    # V23/V24/V25/V26 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0
     bb_upper_band = 'BBU_14_2.0'
     
     df['Score_MACD'] = 0.0
@@ -227,10 +230,10 @@ def run_simple_momentum_model(input_data):
     # 篩選分數大於 0 的股票
     top_stocks = top_stocks[top_stocks['AI_Score'] > 0]
     
-    # V24 修正：只選取純代碼 stock_code，確保欄位簡潔
+    # V24/V25/V26 修正：只選取純代碼 stock_code，確保欄位簡潔
     final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由']]
     
-    # V25 修正：利用擴充後的 STOCK_NAMES_MAP 增加中文名稱欄位
+    # V25/V26 修正：利用擴充後的 STOCK_NAMES_MAP 增加中文名稱欄位
     final_recommendations['股票名稱'] = final_recommendations['stock_code'].apply(
         lambda x: STOCK_NAMES_MAP.get(x, f'代碼{x}')
     )
@@ -238,11 +241,11 @@ def run_simple_momentum_model(input_data):
     return final_recommendations
 
 # -----------------------------------------------------------
-# 步驟 3: Streamlit 網頁主體 (V25 介面更新)
+# 步驟 3: Streamlit 網頁主體 (V26 介面更新)
 # -----------------------------------------------------------
 def main():
     st.set_page_config(page_title='AI 短期波段選股系統', layout='wide')
-    st.title('📈 AI 短期波段選股系統 (V25: 修正中文名稱顯示)')
+    st.title('📈 AI 短期波段選股系統 (V26: 修正中文名稱顯示)')
     st.markdown(f'**分析模型:** 短線動能強化模型 (KDJ, BBANDS, MACD, RSI, Vol) | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
     # --- 產業篩選下拉選單 ---
@@ -291,7 +294,7 @@ def main():
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE_VALUE
     
     # 2. 調整輸出順序和欄位名稱
-    # V24/V25 維持：只保留必要的欄位
+    # V24/V25/V26 維持：只保留必要的欄位
     final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
         'stock_code': '股票代碼',
