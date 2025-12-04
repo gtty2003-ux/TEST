@@ -23,7 +23,7 @@ STOCK_NAMES_MAP = {
 SAMPLE_STOCKS = ['2303.TW', '1101.TW', '2002.TW', '1314.TW', '2409.TW', '3231.TW', '3008.TW', '1710.TW', '1402.TW', '2498.TW', '2501.TW', '2891.TW']
 
 
-@st.cache_data(ttl=dt.timedelta(hours=24)) # <--- 修正: 刪除上一行多餘的 @
+@st.cache_data(ttl=dt.timedelta(hours=24))
 def get_and_prepare_data(start_date, end_date, stocks):
     
     final_data_list = []
@@ -111,6 +111,14 @@ def main():
     st.title('📈 AI 短期波段選股系統')
     st.markdown(f'**分析模型:** 基於 MACD, RSI, 成交量動能 | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
+    # --- 新增：立即更新按鈕 ---
+    # 當按鈕被點擊時, 清除 get_and_prepare_data 的緩存, 讓它重新運行
+    if st.button('🔄 立即手動更新數據 (清除緩存)'):
+        st.cache_data.clear()
+        st.success('數據緩存已清除, 正在重新獲取資料...')
+        st.rerun() # 重新運行整個腳本
+    # --------------------------
+    
     # 設定日期範圍
     end_date = dt.date.today()
     start_date = end_date - dt.timedelta(days=120) 
@@ -131,9 +139,8 @@ def main():
     st.header('🏆 本日 Top 5 推薦清單')
     
     # 調整輸出順序和欄位名稱
-    final_recommendations = final_recommendations[['stock_name_en', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
+    final_recommendations = final_recommendations[[ '股票名稱', 'Close', 'AI_Score', '推薦理由']] # <--- 修正: 移除 stock_name_en
     final_recommendations = final_recommendations.rename(columns={
-        'stock_name_en': '股票代碼',
         'Close': '當日收盤價 (元)', 
         'AI_Score': '分析分數'
     })
@@ -145,7 +152,7 @@ def main():
     # 使用 Streamlit 顯示表格
     st.dataframe(final_recommendations, use_container_width=True)
 
-    # 使用明確的字符串和換行符來定義 Markdown, 避免三重引號衝突
+    # 使用明確的字符串和換行符來定義 Markdown
     markdown_notes = (
         '---\n'
         '**備註說明:**\n'
