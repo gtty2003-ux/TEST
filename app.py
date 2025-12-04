@@ -42,7 +42,6 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df.index.name = 'date'
             df = df.reset_index()
             df['stock_id'] = stock_id
-            # V11: 移除 stock_name_en, 直接用純代碼欄位 'stock_code'
             df['stock_code'] = stock_id.split('.')[0]
             
             # 1. 計算技術指標
@@ -61,7 +60,8 @@ def get_and_prepare_data(start_date, end_date, stocks):
         return pd.DataFrame()
         
     df_final = pd.concat(final_data_list, ignore_index=True)
-    candidate_stocks = df_final[df_final['Close'] <= PRICE_LIMIT].set_index('stock_id')
+    # V12 修正：將 index 重設為預設，這樣 Streamlit 就不會顯示 index 欄位
+    candidate_stocks = df_final[df_final['Close'] <= PRICE_LIMIT].reset_index(drop=True)
     
     return candidate_stocks
 
@@ -95,10 +95,10 @@ def run_simple_momentum_model(input_data):
     # 排序並取出 Top 5
     top_stocks = df.sort_values(by='AI_Score', ascending=False)
     
-    # V11: 僅保留需要的欄位，使用 stock_code 作為純代碼
-    final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由']]
+    # V12: 使用 stock_code (純代碼) 和 stock_id (原始代碼) 進行處理
+    final_recommendations = top_stocks.head(5)[['stock_code', 'stock_id', 'Close', 'AI_Score', '推薦理由']]
     
-    # 增加中文名稱欄位 (使用 stock_code 的值去查找 STOCK_NAMES_MAP)
+    # 增加中文名稱欄位
     final_recommendations['股票名稱'] = final_recommendations['stock_code'].apply(
         lambda x: STOCK_NAMES_MAP.get(x, f'代碼{x}')
     )
@@ -139,11 +139,11 @@ def main():
 
     st.header('🏆 本日 Top 5 推薦清單')
     
-    # --- V11 核心修正 ---
-    # 1. 轉換分數為 100 分制 (0.00-0.70 轉為 0-100)
+    # --- V12 核心修正 ---
+    # 1. 轉換分數為 100 分制
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / 0.7
     
-    # 2. 調整輸出順序和欄位名稱 (使用 stock_code 作為 '股票代碼')
+    # 2. 調整輸出順序和欄位名稱 (使用 stock_code 作為 '股票代碼', 並移除 'stock_id')
     final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
         'stock_code': '股票代碼',
@@ -152,13 +152,13 @@ def main():
     })
     
     # 3. 格式化輸出
-    # 股票代碼已在源頭移除 .TW (使用 stock_code 欄位)
     final_recommendations['當日收盤價 (元)'] = final_recommendations['當日收盤價 (元)'].apply(lambda x: f'{x:,.2f}')
-    final_recommendations['分析分數'] = final_recommendations['分析分數'].apply(lambda x: f'{x:.1f}') # 分數顯示一位小數
+    final_recommendations['分析分數'] = final_recommendations['分析分數'].apply(lambda x: f'{x:.1f}')
     # --------------------
 
     # 使用 Streamlit 顯示表格
-    st.dataframe(final_recommendations, use_container_width=True)
+    # V12 修正：設置 display_index=False 確保不顯示左側的 Index 欄位
+    st.dataframe(final_recommendations, use_container_width=True, hide_index=True)
 
     # 更新備註說明以符合 100 分制
     markdown_notes = (
