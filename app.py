@@ -1,4 +1,4 @@
-# app.py - AI選股系統 Streamlit 網站程式碼 (V24: 輸出欄位精簡)
+# app.py - AI選股系統 Streamlit 網站程式碼 (V25: 擴充中文名稱對應表)
 
 # -----------------------------------------------------------
 # 步驟 1: 匯入必要的套件 (Streamlit 與分析套件)
@@ -15,19 +15,28 @@ import pandas_ta as ta
 # -----------------------------------------------------------
 PRICE_LIMIT = 50          
 STOCK_NAMES_MAP = {
-    # V20 修正：擴充常用中文名稱對應表，確保重要金融股包含在內
+    # V20 基礎對應
     '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電', 
     '1101': '台泥', '2002': '中鋼', '2303': '聯電', '2409': '友達', '3231': '緯創', 
     '1710': '東聯', '1402': '遠東新', '2501': '國建', '2353': '宏碁', '2345': '智邦', 
     '2324': '仁寶', '3711': '日月光投控', '5483': '中美晶', '2498': '宏達電', '3008': '大立光',
     '2603': '長榮', '2609': '陽明', '2618': '長榮航', '2610': '華航', '1216': '統一', 
     '1301': '台塑', '1303': '南亞', '6505': '台塑化', '1314': '中石化', 
-    # 金融股 (包含 2884 玉山金)
+    # 金融股
     '2881': '富邦金', '2882': '國泰金', '2884': '玉山金', '2885': '元大金', '2886': '兆豐金', 
     '2887': '台新金', '2888': '新光金', '2891': '中信金', '5871': '中租-KY', '5880': '合庫金',
     '2801': '彰銀', '2834': '臺企銀', '2838': '聯邦銀', '2892': '第一金', '2890': '永豐金',
-    '2337': '旺宏', '2344': '華邦電', '3006': '晶豪科', '3260': '威剛', # 記憶體/硬碟相關
-    '2454': '聯發科', '3034': '聯詠', '4968': '立積', '6415': '矽力-KY', '3532': '台勝科', # 半導體相關
+    # 記憶體/硬碟相關
+    '2337': '旺宏', '2344': '華邦電', '3006': '晶豪科', '3260': '威剛', 
+    # 半導體相關
+    '2454': '聯發科', '3034': '聯詠', '4968': '立積', '6415': '矽力-KY', '3532': '台勝科', 
+    # V25 擴充：加入近期出現但名稱錯誤的股票代碼 (錸德、鈺創、緯軟、怡華、大東、大億)
+    '2349': '錸德', 
+    '3027': '盛達', 
+    '2399': '映泰', 
+    '1455': '集盛', 
+    '1434': '福懋', 
+    '3049': '和鑫', 
 }
     
 # V18 基礎：最大化選股池 (約 1000 檔) 作為'全部'選項的基礎清單
@@ -130,7 +139,6 @@ def get_and_prepare_data(start_date, end_date, stocks):
             df.columns = df.columns.str.replace(' ', '')
             df.index.name = 'date'
             df = df.reset_index()
-            # V24 修正: 移除 stock_id_full，只保留 stock_code (純代碼)
             df['stock_code'] = stock_id.split('.')[0]
             
             # 1. 計算技術指標
@@ -163,7 +171,7 @@ def run_simple_momentum_model(input_data):
         
     df = input_data.copy()
     
-    # V23/V24 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
+    # V23/V24/V25 修正：明確指定布林通道上軌欄位名稱為 BBU_14_2.0 (與 ta.bbands 參數一致)
     bb_upper_band = 'BBU_14_2.0'
     
     df['Score_MACD'] = 0.0
@@ -222,7 +230,7 @@ def run_simple_momentum_model(input_data):
     # V24 修正：只選取純代碼 stock_code，確保欄位簡潔
     final_recommendations = top_stocks.head(5)[['stock_code', 'Close', 'AI_Score', '推薦理由']]
     
-    # 增加中文名稱欄位
+    # V25 修正：利用擴充後的 STOCK_NAMES_MAP 增加中文名稱欄位
     final_recommendations['股票名稱'] = final_recommendations['stock_code'].apply(
         lambda x: STOCK_NAMES_MAP.get(x, f'代碼{x}')
     )
@@ -230,11 +238,11 @@ def run_simple_momentum_model(input_data):
     return final_recommendations
 
 # -----------------------------------------------------------
-# 步驟 3: Streamlit 網頁主體 (V24 介面更新)
+# 步驟 3: Streamlit 網頁主體 (V25 介面更新)
 # -----------------------------------------------------------
 def main():
     st.set_page_config(page_title='AI 短期波段選股系統', layout='wide')
-    st.title('📈 AI 短期波段選股系統 (V24: 精簡輸出 & 產業清單修正)')
+    st.title('📈 AI 短期波段選股系統 (V25: 修正中文名稱顯示)')
     st.markdown(f'**分析模型:** 短線動能強化模型 (KDJ, BBANDS, MACD, RSI, Vol) | **價格限制:** ≤ {PRICE_LIMIT} 元.')
     
     # --- 產業篩選下拉選單 ---
@@ -283,7 +291,7 @@ def main():
     final_recommendations['AI_Score'] = final_recommendations['AI_Score'] * 100 / MAX_SCORE_VALUE
     
     # 2. 調整輸出順序和欄位名稱
-    # V24 修正：只保留必要的欄位，並確保 '股票名稱' 欄位在 '股票代碼' 之後
+    # V24/V25 維持：只保留必要的欄位
     final_recommendations = final_recommendations[['stock_code', '股票名稱', 'Close', 'AI_Score', '推薦理由']]
     final_recommendations = final_recommendations.rename(columns={
         'stock_code': '股票代碼',
