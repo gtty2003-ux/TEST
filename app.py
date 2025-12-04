@@ -6,7 +6,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import datetime as dt # <--- 修正: 確保使用 dt 作為別名
+import datetime as dt
 import yfinance as yf 
 import pandas_ta as ta 
 
@@ -22,8 +22,8 @@ STOCK_NAMES_MAP = {
 }
 SAMPLE_STOCKS = ['2303.TW', '1101.TW', '2002.TW', '1314.TW', '2409.TW', '3231.TW', '3008.TW', '1710.TW', '1402.TW', '2498.TW', '2501.TW', '2891.TW']
 
-@
-@st.cache_data(ttl=dt.timedelta(hours=24)) # <--- 關鍵修正: 將 datetime.timedelta 改為 dt.timedelta
+
+@st.cache_data(ttl=dt.timedelta(hours=24)) # <--- 修正: 刪除上一行多餘的 @
 def get_and_prepare_data(start_date, end_date, stocks):
     
     final_data_list = []
