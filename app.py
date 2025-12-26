@@ -783,7 +783,7 @@ def main():
             else:
                 st.error("資料尚未載入")
 
-    with tab_inv:
+with tab_inv:
         st.subheader("📝 庫存交易管理")
         
         col_btn, col_info = st.columns([1, 4])
@@ -817,23 +817,25 @@ def main():
                 tw_time = get_taiwan_time_str(st.session_state['last_update_time'])
                 st.caption(f"🕒 台灣時間最後更新: {tw_time}")
 
-        # --- 修正 Bug 處：增加判斷 v32_df 是否為空 ---
+        # --- 修正 1: 名稱對應改用 raw_df (確保被濾除的股票也有名字) ---
         name_map = {}
+        if not raw_df.empty:
+             name_map = dict(zip(raw_df['Code'], raw_df['Name']))
+        
+        # --- 修正 2: 建立評分對應與濾網清單 ---
         score_map = {}
         ma20_map = {}
-        
+        filtered_in_codes = [] # 有通過濾網的股票名單
+
         if not v32_df.empty:
-            name_map = dict(zip(v32_df['代號'], v32_df['名稱']))
             score_map = v32_df.set_index('代號')['攻擊分'].to_dict()
+            filtered_in_codes = v32_df['代號'].tolist()
             
             if '20MA' in v32_df.columns:
                 ma20_map = v32_df.set_index('代號')['20MA'].to_dict()
             else:
-                # 確保只有在非空且欄位存在時才迭代
                 if '代號' in v32_df.columns:
                     ma20_map = {code: 0 for code in v32_df['代號']}
-                else:
-                    ma20_map = {}
 
         c1, c2 = st.columns(2)
         with c1:
@@ -876,12 +878,12 @@ def main():
                 code = str(r['股票代號'])
                 curr = saved_quotes.get(code, {}).get('即時價', r['買入均價'])
                 
-                # 若無即時價，嘗試從 V32 資料拿收盤價，但須確認 V32 資料不為空
-                if (curr == 0 or curr == r['買入均價']) and not v32_df.empty:
-                      if '代號' in v32_df.columns:
-                          backup_price = v32_df[v32_df['代號']==code]['收盤'].values
-                          if len(backup_price) > 0:
-                              curr = backup_price[0]
+                # 嘗試取得收盤價當備援
+                if (curr == 0 or curr == r['買入均價']) and not raw_df.empty:
+                      # 這裡改從 raw_df 找，因為 v32_df 可能沒有這檔股票
+                      backup_data = raw_df[raw_df['Code']==code]
+                      if not backup_data.empty:
+                          curr = backup_data['ClosingPrice'].values[0]
 
                 buy_price = r['買入均價']
                 qty = r['持有股數']
@@ -892,12 +894,21 @@ def main():
                 sc = score_map.get(code, 0)
                 ma20 = ma20_map.get(code, 0)
                 
+                # --- 修正 3: 狙擊手專用建議邏輯 ---
+                # 判斷是否為「未通過濾網」的股票
+                passed_filter = code in filtered_in_codes
+                
                 if curr < ma20 and ma20 > 0:
                     action = f"🔴 停損/清倉 (破月線 {ma20:.1f})"
-                elif sc >= 75:
+                elif not passed_filter:
+                    # 沒通過 ADX 或 乖離率濾網
+                    action = "⚠️ 趨勢不明/過熱 (濾網剔除)"
+                elif sc >= 60:
+                    # 通過濾網且分數不錯 (門檻降為 60)
                     action = f"🟢 續抱 (攻擊分 {sc:.0f})"
                 else:
-                    action = f"🟡 停利/減碼 (攻擊分 {sc:.0f} < 75)"
+                    # 通過濾網但動能不足
+                    action = f"🟡 動能偏弱 (攻擊分 {sc:.0f})"
 
                 res.append({
                     '代號': code, '名稱': name_map.get(code, code), 
@@ -913,11 +924,24 @@ def main():
             c2.metric("總損益", f"${df_res['損益'].sum():,.0f}", delta=f"{df_res['損益'].sum():,.0f}")
             c3.metric("總市值", f"${(df_res['即時價']*(inv_df['持有股數'])).sum():,.0f}")
             
+            # 針對建議操作設定顏色
+            def color_sniper_action(val):
+                val_str = str(val)
+                if "🔴" in val_str:
+                    return 'color: #ffffff; background-color: #d32f2f; font-weight: bold; padding: 5px; border-radius: 5px;' # 紅底
+                elif "🟢" in val_str:
+                    return 'color: #ffffff; background-color: #2e7d32; font-weight: bold; padding: 5px; border-radius: 5px;' # 綠底
+                elif "⚠️" in val_str:
+                    return 'color: #000000; background-color: #e0e0e0; font-weight: bold; padding: 5px; border-radius: 5px;' # 灰底(濾網剔除)
+                elif "🟡" in val_str:
+                    return 'color: #000000; background-color: #ffeb3b; font-weight: bold; padding: 5px; border-radius: 5px;' # 黃底
+                return ''
+
             st.dataframe(
                 df_res[['代號', '名稱', '持有張數', '買入均價', '即時價', '攻擊分', '報酬率%', '損益', '建議操作']].style
                 .format({'買入均價':'{:.2f}', '即時價':'{:.2f}', '損益':'{:+,.0f}', '報酬率%':'{:+.2f}%', '攻擊分':'{:.1f}'})
                 .map(color_surplus, subset=['損益','報酬率%'])
-                .map(color_action, subset=['建議操作']), 
+                .map(color_sniper_action, subset=['建議操作']), 
                 use_container_width=True, hide_index=True
             )
         else: st.info("目前無庫存。")
