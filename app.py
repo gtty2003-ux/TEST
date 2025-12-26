@@ -884,6 +884,43 @@ def main():
             save_holdings(inv)
             st.rerun()
 
+        # ==========================================
+        # ⚡ 快速操作區 (新功能)
+        # ==========================================
+        st.divider()
+        st.subheader("⚡ 快速操作區")
+        c1, c2 = st.columns(2)
+        
+        # 取得目前庫存代號列表
+        current_inv_codes = []
+        if not st.session_state['inventory'].empty:
+            current_inv_codes = st.session_state['inventory']['股票代號'].unique().tolist()
+
+        with c1:
+            st.markdown("##### 📉 個股清倉")
+            to_sell_all = st.multiselect("選擇要全數賣出的股票", options=current_inv_codes)
+            
+            if st.button("💥 執行個股清倉", type="primary", disabled=not to_sell_all):
+                inv = st.session_state['inventory'].copy()
+                # 排除選中的股票
+                inv = inv[~inv['股票代號'].isin(to_sell_all)]
+                st.session_state['inventory'] = inv
+                save_holdings(inv)
+                st.toast(f"已清空: {', '.join(to_sell_all)}", icon="💥")
+                time.sleep(1)
+                st.rerun()
+
+        with c2:
+            st.markdown("##### 🧨 重置帳戶")
+            st.warning("注意：此操作將刪除所有庫存紀錄")
+            if st.button("🗑️ 全部清空 (刪除所有庫存)", type="secondary"):
+                inv = pd.DataFrame(columns=["股票代號", "買入均價", "持有股數"])
+                st.session_state['inventory'] = inv
+                save_holdings(inv)
+                st.toast("已清空所有庫存！", icon="🗑️")
+                time.sleep(1)
+                st.rerun()
+
         st.divider()
         if not st.session_state['inventory'].empty:
             inv_df = st.session_state['inventory'].copy()
