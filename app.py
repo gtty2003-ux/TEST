@@ -125,7 +125,7 @@ def get_market_status():
         return None
 
 # --- 資料讀取 ---
-@st.cache_data(ttl=1)
+@st.cache_data(ttl=1800)
 def load_data_from_github():
     try:
         token = st.secrets["general"]["GITHUB_TOKEN"]
@@ -575,10 +575,14 @@ def save_holdings(df):
         repo.update_file(contents.path, f"Update {get_taiwan_time_iso()}", csv_content, contents.sha)
     except: pass
 
-# --- Tab 1 & 2 表格渲染 ---
+# --- Tab 1 & 2 表格渲染 (防呆修復版) ---
 def display_v32_tables(df, price_limit, suffix):
+    # 篩選邏輯
     filtered = df[(df['收盤'] <= price_limit) & (df['攻擊分'] >= 80)].sort_values('攻擊分', ascending=False)
-    if filtered.empty: return st.warning("目前無符合「狙擊手」標準 (ADX>25 & 乖離<15%) 的高分標的")
+    
+    if filtered.empty: 
+        st.warning("目前無符合標準 (ADX>25 & 乖離<15%) 的高分標的，或是資料尚未更新。")
+        return
 
     df_s_pre = filtered[(filtered['攻擊分'] >= 90)].head(10)
     df_a_pre = filtered[(filtered['攻擊分'] >= 80) & (filtered['攻擊分'] < 90)].head(10)
@@ -587,7 +591,7 @@ def display_v32_tables(df, price_limit, suffix):
     # --- 功能按鈕區 ---
     c_scan, c_risk, c_update, c_info = st.columns([1, 1, 1, 1.5])
     
-    # 定義 Session State Key，確保不同頁面的資料不打架
+    # 定義 Session State Key
     chip_key = f"chip_data_{suffix}"
     risk_key = f"risk_data_{suffix}"
 
@@ -595,14 +599,14 @@ def display_v32_tables(df, price_limit, suffix):
     with c_scan:
         if st.button(f"🚀 籌碼掃描", key=f"scan_{suffix}"):
             chip_df = get_chip_analysis(target_codes)
-            st.session_state[chip_key] = chip_df # 存入 Session
+            st.session_state[chip_key] = chip_df 
 
     # 按鈕 2: 地雷檢測
     with c_risk:
         if st.button(f"💣 地雷檢測", key=f"risk_{suffix}"):
             with st.spinner("正在進行深度財報與質押掃描..."):
                 risk_df = get_risk_analysis_batch(target_codes)
-                st.session_state[risk_key] = risk_df # 存入 Session
+                st.session_state[risk_key] = risk_df 
 
     # 按鈕 3: 更新即時價
     with c_update:
@@ -630,28 +634,37 @@ def display_v32_tables(df, price_limit, suffix):
             tw_time = get_taiwan_time_str(st.session_state['last_update_time'])
             st.caption(f"🕒 更新: {tw_time}")
 
-    # --- 資料合併邏輯 (從 Session 讀取並合併，確保資料共存) ---
-    
-    # 1. 合併籌碼資料 (如果有的話)
+    # --- 資料合併邏輯 ---
     if chip_key in st.session_state:
         filtered = pd.merge(filtered, st.session_state[chip_key], on='代號', how='left')
 
-    # 2. 合併地雷資料 (如果有的話)
     if risk_key in st.session_state:
         filtered = pd.merge(filtered, st.session_state[risk_key], on='代號', how='left')
 
-    # 3. 合併即時報價
     saved_quotes = st.session_state.get('realtime_quotes', {})
     filtered['即時價'] = filtered['代號'].map(lambda x: saved_quotes.get(x, {}).get('即時價', np.nan))
     filtered['即時價'] = filtered['即時價'].fillna(filtered['收盤'])
 
-    # --- 表格顯示 ---
-    base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分', 'ADX', '乖離率']
-    # 動態欄位檢查
+    # --- 表格顯示 (關鍵防呆修改) ---
+    # 1. 先定義絕對存在的欄位
+    base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分']
+    
+    # 2. 動態檢查其他欄位是否存在，存在才加入，避免 KeyError
+    # 檢查 ADX 與 乖離率
+    if 'ADX' in filtered.columns: base_cols.append('ADX')
+    if '乖離率' in filtered.columns: base_cols.append('乖離率')
+    
+    # 檢查籌碼
     if '主力動向' in filtered.columns: base_cols += ['主力動向', '投信(張)', '外資(張)']
+    
+    # 檢查地雷
     if '地雷分' in filtered.columns: base_cols += ['地雷分', '風險細節']
 
-    fmt = {'即時價':'{:.2f}', '攻擊分':'{:.1f}', '技術分':'{:.0f}', '量能分':'{:.0f}', '外資(張)': '{:,.0f}', '投信(張)': '{:,.0f}', '地雷分':'{:.0f}', 'ADX':'{:.1f}', '乖離率':'{:.1f}%'}
+    fmt = {
+        '即時價':'{:.2f}', '攻擊分':'{:.1f}', '技術分':'{:.0f}', '量能分':'{:.0f}', 
+        '外資(張)': '{:,.0f}', '投信(張)': '{:,.0f}', '地雷分':'{:.0f}', 
+        'ADX':'{:.1f}', '乖離率':'{:.1f}%'
+    }
 
     for title, score_range in [
         ("👑 S 級主力區 (90分以上)", (90, 100)),
@@ -659,14 +672,17 @@ def display_v32_tables(df, price_limit, suffix):
     ]:
         st.subheader(title)
         sub = filtered[(filtered['攻擊分'] >= score_range[0]) & (filtered['攻擊分'] <= score_range[1])].head(10)
+        
         if not sub.empty:
+            # 安全地建立表格
             st.dataframe(sub[base_cols].style.format(fmt)
                          .background_gradient(subset=['攻擊分'], cmap=cmap_pastel_red, vmin=80, vmax=100)
                          .background_gradient(subset=['技術分'], cmap=cmap_pastel_blue, vmin=0, vmax=100)
                          .background_gradient(subset=['量能分'], cmap=cmap_pastel_green, vmin=0, vmax=100)
                          .map(color_risk, subset=['地雷分'] if '地雷分' in sub.columns else []), 
                          hide_index=True, use_container_width=True)
-        else: st.caption("無符合標的")
+        else: 
+            st.caption("無符合標的 (若一直無資料，請清除快取)")
         st.divider()
 
 # --- 新增：個股搜尋專用顯示函式 ---
@@ -732,7 +748,7 @@ def display_single_stock_search(df, target_code):
                  .map(color_action, subset=['主力動向'] if '主力動向' in row.columns else []), 
                  hide_index=True, use_container_width=True)
 
-# --- 主程式 (包含防呆修復) ---
+# --- 主程式 (包含防呆修復與庫存顯示修復) ---
 def main():
     st.title("⚔️ V32 戰情室 (Sniper Mode)")
     # --- 插入：大盤濾網顯示 ---
@@ -756,9 +772,10 @@ def main():
     if 'last_update_time' not in st.session_state: st.session_state['last_update_time'] = 0
     
     with st.spinner("讀取核心資料..."):
+        # 這裡會讀取原始資料 raw_df，確保庫存名字不會消失
         v32_df, raw_df, err = process_data()
     
-    # --- 修改點：新增 tab_search ---
+    # --- 定義 Tabs (關鍵: 必須在這裡定義 tab_inv) ---
     tab_80, tab_50, tab_search, tab_inv = st.tabs(["💰 80元以下推薦", "🪙 50元以下推薦", "🔍 個股診斷", "💼 庫存管理"])
 
     with tab_80:
@@ -769,7 +786,6 @@ def main():
         if not v32_df.empty: display_v32_tables(v32_df.copy(), 50, "50")
         else: st.warning("資料庫為空，或所有股票皆被 ADX/乖離率 濾網剔除。")
 
-    # --- 修改點：新增搜尋頁面邏輯 ---
     with tab_search:
         st.subheader("🔍 個股 V32 體檢室")
         c1, c2 = st.columns([1, 3])
@@ -783,7 +799,7 @@ def main():
             else:
                 st.error("資料尚未載入")
 
-with tab_inv:
+    with tab_inv:
         st.subheader("📝 庫存交易管理")
         
         col_btn, col_info = st.columns([1, 4])
@@ -878,9 +894,8 @@ with tab_inv:
                 code = str(r['股票代號'])
                 curr = saved_quotes.get(code, {}).get('即時價', r['買入均價'])
                 
-                # 嘗試取得收盤價當備援
+                # 嘗試取得收盤價當備援 (優先用 raw_df 找，因為 v32_df 可能沒有)
                 if (curr == 0 or curr == r['買入均價']) and not raw_df.empty:
-                      # 這裡改從 raw_df 找，因為 v32_df 可能沒有這檔股票
                       backup_data = raw_df[raw_df['Code']==code]
                       if not backup_data.empty:
                           curr = backup_data['ClosingPrice'].values[0]
@@ -895,19 +910,15 @@ with tab_inv:
                 ma20 = ma20_map.get(code, 0)
                 
                 # --- 修正 3: 狙擊手專用建議邏輯 ---
-                # 判斷是否為「未通過濾網」的股票
                 passed_filter = code in filtered_in_codes
                 
                 if curr < ma20 and ma20 > 0:
                     action = f"🔴 停損/清倉 (破月線 {ma20:.1f})"
                 elif not passed_filter:
-                    # 沒通過 ADX 或 乖離率濾網
                     action = "⚠️ 趨勢不明/過熱 (濾網剔除)"
                 elif sc >= 60:
-                    # 通過濾網且分數不錯 (門檻降為 60)
                     action = f"🟢 續抱 (攻擊分 {sc:.0f})"
                 else:
-                    # 通過濾網但動能不足
                     action = f"🟡 動能偏弱 (攻擊分 {sc:.0f})"
 
                 res.append({
@@ -932,7 +943,7 @@ with tab_inv:
                 elif "🟢" in val_str:
                     return 'color: #ffffff; background-color: #2e7d32; font-weight: bold; padding: 5px; border-radius: 5px;' # 綠底
                 elif "⚠️" in val_str:
-                    return 'color: #000000; background-color: #e0e0e0; font-weight: bold; padding: 5px; border-radius: 5px;' # 灰底(濾網剔除)
+                    return 'color: #000000; background-color: #e0e0e0; font-weight: bold; padding: 5px; border-radius: 5px;' # 灰底
                 elif "🟡" in val_str:
                     return 'color: #000000; background-color: #ffeb3b; font-weight: bold; padding: 5px; border-radius: 5px;' # 黃底
                 return ''
