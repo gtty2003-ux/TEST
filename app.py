@@ -125,7 +125,7 @@ def get_market_status():
         return None
 
 # --- 資料讀取 ---
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=1)
 def load_data_from_github():
     try:
         token = st.secrets["general"]["GITHUB_TOKEN"]
