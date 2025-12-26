@@ -144,7 +144,7 @@ def load_data_from_github():
     except Exception as e:
         return pd.DataFrame()
 
-# --- V32 運算邏輯 (Option A: 標準狙擊手 - ADX + 布林通道濾網 + 0分起跑) ---
+# --- V32 運算邏輯 (Option A: 標準狙擊手 - ADX/乖離率濾網 + 0分起跑計分) ---
 def calculate_v32_score(df_group):
     # 資料長度不足無法計算 ADX (至少需要 14+1 天)
     if len(df_group) < 30: return None 
@@ -158,24 +158,27 @@ def calculate_v32_score(df_group):
     open_p = df['OpeningPrice']
     
     # ==========================================
-    # 🔍 步驟 1: 計算關鍵指標
+    # 🔍 步驟 1: 計算關鍵指標 (ADX & 乖離率)
     # ==========================================
     
     # 1. 計算均線
     ma5, ma20, ma60 = close.rolling(5).mean(), close.rolling(20).mean(), close.rolling(60).mean()
     
-    # 2. 計算 ADX (趨勢強度指標)
+    # 2. 計算 ADX (趨勢強度指標) - 使用 Pandas 實作
+    # True Range
     df['tr0'] = abs(high - low)
     df['tr1'] = abs(high - close.shift(1))
     df['tr2'] = abs(low - close.shift(1))
     tr = df[['tr0', 'tr1', 'tr2']].max(axis=1)
     
+    # Directional Movement
     up_move = high - high.shift(1)
     down_move = low.shift(1) - low
     
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
     
+    # Wilder's Smoothing (alpha=1/14)
     atr = tr.ewm(alpha=1/14, adjust=False).mean()
     smooth_plus_dm = pd.Series(plus_dm).ewm(alpha=1/14, adjust=False).mean()
     smooth_minus_dm = pd.Series(minus_dm).ewm(alpha=1/14, adjust=False).mean()
@@ -198,39 +201,24 @@ def calculate_v32_score(df_group):
         return None
 
     # ==========================================
-    # 🛡️ 步驟 2: 布林通道與乖離濾網 (新增區塊)
+    # ⛔ 步驟 2: 雙重濾網 (The Gatekeepers)
     # ==========================================
     
-    # 計算乖離率
-    bias_percentage = (c_now - m20_now) / m20_now * 100
-
-    # 計算布林通道 (20MA, 2倍標準差)
-    std20 = close.rolling(20).std()
-    upper_band = ma20 + (std20 * 2)
-    lower_band = ma20 - (std20 * 2)
-    
-    # 計算帶寬 (Bandwidth) 與 斜率
-    # 帶寬 % = (上軌 - 下軌) / 中軌
-    bandwidth = ((upper_band - lower_band) / ma20) * 100
-    bw_now = bandwidth.iloc[i]
-    
-    # 判斷開口方向: 取 3 天前的帶寬比較，若變大代表開口打開
-    bw_prev_3 = bandwidth.iloc[i-3] if len(bandwidth) > 3 else bw_now
-    bw_slope = bw_now - bw_prev_3
-
-    # ==========================================
-    # ⛔ 步驟 3: 初步篩選 (The Gatekeepers)
-    # ==========================================
-    
-    # 濾網 A: 防止死魚 (ADX 過低)
+    # 濾網 A: 防止被巴 (The Anti-Whipsaw)
+    # 邏輯：ADX <= 25 代表趨勢不明顯，直接淘汰
     if adx_now <= 25: 
         return None 
         
-    # 濾網 B: 防止追高 (乖離率過高)
+    # 濾網 B: 防止追高 (The Anti-Chase)
+    # 邏輯：乖離率 >= 15% 代表離月線太遠，風險太高不追
+    bias_percentage = (c_now - m20_now) / m20_now * 100
     if bias_percentage >= 15:
         return None 
 
-    # 其他指標計算 (RSI, MACD)
+    # --- 能走到這裡，代表 ADX > 25 且 乖離率 < 15% (合格標的) ---
+    # --- 接下來使用「激進派計分 (0分起跑)」進行評比 ---
+
+    # 其他指標計算 (RSI, MACD...)
     delta = close.diff()
     gain, loss = (delta.where(delta > 0, 0)).rolling(14).mean(), (-delta.where(delta < 0, 0)).rolling(14).mean()
     rsi = 100 - (100 / (1 + (gain / loss)))
@@ -252,14 +240,8 @@ def calculate_v32_score(df_group):
     if m20_now > ma20.iloc[i-1]: t_score += 10
     if ma5.iloc[i] > m20_now > ma60.iloc[i]: t_score += 20
     
-    # 2. 關鍵突破 (30分) - 精細分級版
-    if c_now >= high_20.iloc[i-1]: 
-        if bw_slope > 0: 
-            t_score += 30  # 【最優等級】突破且通道打開：最強攻擊訊號
-        elif bw_slope > -0.5:
-            t_score += 15  # 【普通等級】突破但通道持平：高位橫盤，第一銅會落在此區
-        else:
-            t_score += 0  # 【轉弱警示】突破但通道明顯收縮：極大機率是假突破
+    # 2. 關鍵突破 (30分)
+    if c_now >= high_20.iloc[i-1]: t_score += 30
     
     # 3. 動能指標 (30分)
     if r_now > 55: t_score += 15
@@ -292,10 +274,9 @@ def calculate_v32_score(df_group):
         '收盤': c_now,
         '20MA': m20_now,
         'ADX': adx_now,
-        '乖離率': bias_percentage,
-        '布林帶寬': bw_now # 這裡多回傳一個帶寬值，方便未來除錯或觀察
+        '乖離率': bias_percentage
     }
-    
+
 @st.cache_data(ttl=1800)
 def process_data():
     raw_df = load_data_from_github()
