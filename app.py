@@ -252,11 +252,14 @@ def calculate_v32_score(df_group):
     if m20_now > ma20.iloc[i-1]: t_score += 10
     if ma5.iloc[i] > m20_now > ma60.iloc[i]: t_score += 20
     
-    # 2. 關鍵突破 (30分) - [修正重點] 加入布林帶寬判斷
-    # 邏輯：雖然突破 20 日高，但如果布林帶寬在縮小或走平(斜率<=0)，視為假突破，不給分
+    # 2. 關鍵突破 (30分) - 精細分級版
     if c_now >= high_20.iloc[i-1]: 
-        if bw_slope > 0: # 只有在通道打開時的突破，才是真突破
-            t_score += 30
+        if bw_slope > 0: 
+            t_score += 30  # 【最優等級】突破且通道打開：最強攻擊訊號
+        elif bw_slope > -0.5:
+            t_score += 15  # 【普通等級】突破但通道持平：高位橫盤，第一銅會落在此區
+        else:
+            t_score += 0  # 【轉弱警示】突破但通道明顯收縮：極大機率是假突破
     
     # 3. 動能指標 (30分)
     if r_now > 55: t_score += 15
