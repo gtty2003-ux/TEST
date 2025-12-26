@@ -11,7 +11,6 @@ import twstock
 import matplotlib.colors as mcolors
 import io
 import requests
-# --- 新增：富果 API 套件 ---
 from fugle_marketdata import RestClient
 
 # --- 設定頁面資訊 ---
@@ -81,11 +80,6 @@ def color_risk(val):
     elif val >= 30:
         return 'color: #000000; background-color: #ffeb3b; font-weight: bold;' # 黃底 (警戒)
     return 'color: #1b5e20; font-weight: bold;' # 綠字 (安全)
-
-# ... (上面是 color_risk 函式)
-    return 'color: #1b5e20; font-weight: bold;' # 綠字 (安全)
-
-# ================= ✄ 這裡開始插入 =================
 
 # --- 新增：大盤濾網模組 ---
 @st.cache_data(ttl=3600) # 大盤一小時更新一次即可
