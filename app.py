@@ -15,7 +15,7 @@ from fugle_marketdata import RestClient
 
 # --- 設定頁面資訊 ---
 st.set_page_config(
-    page_title="V32 戰情室 (Scout Mode)",
+    page_title="V32 戰情室 (Sniper Mode)",
     layout="wide",
     page_icon="⚔️"
 )
@@ -81,7 +81,7 @@ def color_risk(val):
         return 'color: #000000; background-color: #ffeb3b; font-weight: bold;' # 黃底 (警戒)
     return 'color: #1b5e20; font-weight: bold;' # 綠字 (安全)
 
-# --- 新增：大盤濾網模組 ---
+# --- 大盤濾網模組 ---
 @st.cache_data(ttl=3600) # 大盤一小時更新一次即可
 def get_market_status():
     try:
@@ -144,22 +144,25 @@ def load_data_from_github():
     except Exception as e:
         return pd.DataFrame()
 
-# --- V32 運算邏輯 (修改版：全計算，僅標記濾網狀態) ---
+# --- V32 運算邏輯 (修改版：1-2周短線狙擊模式) ---
 def calculate_v32_score(df_group):
     if len(df_group) < 30: return None 
     df = df_group.sort_values('Date').reset_index(drop=True)
     
-    # 基礎數據
+    # --- 基礎數據 ---
     close = df['ClosingPrice']
     high = df['HighestPrice']
     low = df['LowestPrice']
     vol = df['TradeVolume']
     open_p = df['OpeningPrice']
     
-    # 1. 計算均線
-    ma5, ma20, ma60 = close.rolling(5).mean(), close.rolling(20).mean(), close.rolling(60).mean()
+    # 1. 計算均線 (新增 MA10, 強調 MA5)
+    ma5 = close.rolling(5).mean()
+    ma10 = close.rolling(10).mean()
+    ma20 = close.rolling(20).mean()
+    ma60 = close.rolling(60).mean()
     
-    # 2. 計算 ADX
+    # 2. 計算 ADX (維持原樣)
     df['tr0'] = abs(high - low)
     df['tr1'] = abs(high - close.shift(1))
     df['tr2'] = abs(low - close.shift(1))
@@ -181,59 +184,95 @@ def calculate_v32_score(df_group):
     dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
     adx = dx.ewm(alpha=1/14, adjust=False).mean() 
     
-    # 3. 準備當前數值
+    # --- 3. 新增：計算 KD (Stochastic Oscillator) ---
+    # 9日 RSV
+    low_9 = low.rolling(9).min()
+    high_9 = high.rolling(9).max()
+    rsv = (close - low_9) / (high_9 - low_9) * 100
+    rsv = rsv.fillna(50)
+    
+    # 計算 K, D (平滑參數設為 3)
+    k_vals = [50]
+    d_vals = [50]
+    for r in rsv.iloc[1:]:
+        k = (1/3) * r + (2/3) * k_vals[-1]
+        d = (1/3) * k + (2/3) * d_vals[-1]
+        k_vals.append(k)
+        d_vals.append(d)
+        
+    k_series = pd.Series(k_vals, index=rsv.index)
+    d_series = pd.Series(d_vals, index=rsv.index)
+
+    # --- 4. 準備當前數值 ---
     i = -1 
     c_now = close.iloc[i]
+    m5_now = ma5.iloc[i]
+    m10_now = ma10.iloc[i]
     m20_now = ma20.iloc[i]
-    v_now = vol.iloc[i]
     adx_now = adx.iloc[i]
+    k_now = k_series.iloc[i]
+    d_now = d_series.iloc[i]
     
-    if pd.isna(c_now) or c_now == 0 or pd.isna(m20_now) or m20_now == 0 or pd.isna(adx_now): 
-        return None
+    if pd.isna(c_now) or c_now == 0 or pd.isna(m20_now) or pd.isna(adx_now): return None
 
-    # 計算乖離率
+    # 計算乖離率 (短線看與 20MA 的乖離)
     bias_percentage = (c_now - m20_now) / m20_now * 100
 
     # ==========================================
-    # 判定濾網狀態 (不直接 return None，而是標記狀態)
+    # 判定濾網狀態 (針對 1-2 周短線調整)
     # ==========================================
     filter_pass = True
     filter_msg = "通過"
 
-    if adx_now <= 20: 
+    # 短線動能：ADX 門檻提高到 25，確保趨勢已經發動
+    if adx_now <= 25: 
         filter_pass = False
-        filter_msg = "ADX過低"
-    elif bias_percentage >= 15:
+        filter_msg = "動能不足(ADX<25)"
+    # 短線保護：股價必須在 20MA 之上，且 5MA 至少大於 20MA
+    elif c_now < m20_now or m5_now < m20_now:
         filter_pass = False
-        filter_msg = "乖離過大"
+        filter_msg = "趨勢偏弱"
+    elif bias_percentage >= 20: # 短線過熱保護
+        filter_pass = False
+        filter_msg = "短線過熱"
 
-    # --- 繼續計算分數 (即使濾網沒過也要算) ---
+    # --- 計算技術分 (Technical Score) ---
+    # 重點：強調短期均線與 KD 黃金交叉
+    t_score = 0
+    
+    # 均線多頭排列 (短線極強)
+    if c_now > m5_now and m5_now > m10_now > m20_now: t_score += 30
+    elif c_now > m5_now: t_score += 10
+    
+    # KD 指標判定 (短線核心)
+    if k_now > d_now: # K大於D (黃金交叉狀態)
+        if 20 < k_now < 80: t_score += 20 # 最精華路段
+        elif k_now >= 80: t_score += 10   # 高檔鈍化
+    
+    # ADX 強度加分
+    if adx_now > 30: t_score += 15
+    if plus_di.iloc[i] > minus_di.iloc[i]: t_score += 15
+    
+    # RSI (輔助)
     delta = close.diff()
     gain, loss = (delta.where(delta > 0, 0)).rolling(14).mean(), (-delta.where(delta < 0, 0)).rolling(14).mean()
     rsi = 100 - (100 / (1 + (gain / loss)))
-    r_now = rsi.iloc[i]
+    if rsi.iloc[i] > 60: t_score += 20 # RSI > 60 代表進入攻擊區
 
-    exp1, exp2 = close.ewm(span=12, adjust=False).mean(), close.ewm(span=26, adjust=False).mean()
-    macd, signal = (exp1 - exp2), (exp1 - exp2).ewm(span=9, adjust=False).mean()
+    # --- 計算量能分 (Volume Score) ---
+    # 短線極度依賴量能
+    vol_ma5 = vol.rolling(5).mean()
+    vol_ma20 = vol.rolling(20).mean()
+    v_now = vol.iloc[i]
     
-    vol_ma5, vol_ma20 = vol.rolling(5).mean(), vol.rolling(20).mean()
-    high_20 = high.rolling(20).max()
-
-    t_score = 0
-    if c_now > m20_now: t_score += 10
-    if m20_now > ma20.iloc[i-1]: t_score += 10
-    if ma5.iloc[i] > m20_now > ma60.iloc[i]: t_score += 20
-    if c_now >= high_20.iloc[i-1]: t_score += 30
-    if r_now > 55: t_score += 15
-    if macd.iloc[i] > signal.iloc[i]: t_score += 15
-
     v_score = 0
-    if v_now > vol_ma20.iloc[i]: v_score += 20
-    if v_now > vol_ma5.iloc[i]: v_score += 20
-    if v_now > vol_ma20.iloc[i] * 1.5: v_score += 30
-    if c_now > open_p.iloc[i] and v_now > vol.iloc[i-1]: v_score += 30
-    
-    final_score = (min(100, t_score) * 0.7) + (min(100, v_score) * 0.3)
+    if v_now > vol_ma5.iloc[i]: v_score += 30      # 攻擊量
+    if v_now > vol_ma20.iloc[i]: v_score += 20     # 大於月均量
+    if v_now > vol.iloc[i-1]: v_score += 20        # 增量
+    if c_now > open_p.iloc[i]: v_score += 30       # 紅K棒
+
+    # 最終分數權重調整：量能權重提升至 40% (短線量先價行)
+    final_score = (min(100, t_score) * 0.6) + (min(100, v_score) * 0.4)
     
     return {
         '技術分': min(100, t_score), 
@@ -242,9 +281,10 @@ def calculate_v32_score(df_group):
         '收盤': c_now,
         '20MA': m20_now,
         'ADX': adx_now,
+        'KD': f"K{int(k_now)}", # 顯示 K 值供參考
         '乖離率': bias_percentage,
-        'filter_pass': filter_pass, # 新增
-        'filter_msg': filter_msg    # 新增
+        'filter_pass': filter_pass,
+        'filter_msg': filter_msg 
     }
 
 @st.cache_data(ttl=1800)
@@ -479,7 +519,7 @@ def display_v32_tables(df, price_limit, suffix):
     filtered = df[(df['收盤'] <= price_limit) & (df['攻擊分'] >= 60)].sort_values('攻擊分', ascending=False)
     
     if filtered.empty: 
-        st.warning("目前無符合標準 (ADX>20 & 乖離<15%) 的標的，建議空手觀望。")
+        st.warning("目前無符合標準 (ADX>25 & 乖離合理) 的標的，建議空手觀望。")
         return
 
     df_s_pre = filtered[(filtered['攻擊分'] >= 90)].head(10)
@@ -533,6 +573,8 @@ def display_v32_tables(df, price_limit, suffix):
     filtered['即時價'] = filtered['即時價'].fillna(filtered['收盤'])
 
     base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分']
+    # 新增 KD 顯示
+    if 'KD' in filtered.columns: base_cols.append('KD')
     if 'ADX' in filtered.columns: base_cols.append('ADX')
     if '乖離率' in filtered.columns: base_cols.append('乖離率')
     if '主力動向' in filtered.columns: base_cols += ['主力動向', '投信(張)', '外資(張)']
@@ -551,11 +593,11 @@ def display_v32_tables(df, price_limit, suffix):
         
         if not sub.empty:
             st.dataframe(sub[base_cols].style.format(fmt)
-                         .background_gradient(subset=['攻擊分'], cmap=cmap_pastel_red, vmin=60, vmax=100)
-                         .background_gradient(subset=['技術分'], cmap=cmap_pastel_blue, vmin=0, vmax=100)
-                         .background_gradient(subset=['量能分'], cmap=cmap_pastel_green, vmin=0, vmax=100)
-                         .map(color_risk, subset=['地雷分'] if '地雷分' in sub.columns else []), 
-                         hide_index=True, use_container_width=True)
+                          .background_gradient(subset=['攻擊分'], cmap=cmap_pastel_red, vmin=60, vmax=100)
+                          .background_gradient(subset=['技術分'], cmap=cmap_pastel_blue, vmin=0, vmax=100)
+                          .background_gradient(subset=['量能分'], cmap=cmap_pastel_green, vmin=0, vmax=100)
+                          .map(color_risk, subset=['地雷分'] if '地雷分' in sub.columns else []), 
+                          hide_index=True, use_container_width=True)
         else: 
             st.caption("無符合標的")
         st.divider()
@@ -564,7 +606,7 @@ def display_v32_tables(df, price_limit, suffix):
 def display_single_stock_search(df, target_code):
     row = df[df['代號'] == target_code].copy()
     if row.empty:
-        st.warning(f"⚠️ 資料庫中找不到代號 {target_code}，或該股 ADX<20 被剔除。")
+        st.warning(f"⚠️ 資料庫中找不到代號 {target_code}，或該股 ADX<25 被剔除。")
         return
 
     search_key_chip = f"search_chip_{target_code}"
@@ -591,7 +633,7 @@ def display_single_stock_search(df, target_code):
     row['即時價'] = saved_quotes.get(target_code, {}).get('即時價', np.nan)
     row['即時價'] = row['即時價'].fillna(row['收盤'])
 
-    base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分', 'ADX', '乖離率']
+    base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分', 'KD', 'ADX', '乖離率']
     if '主力動向' in row.columns: base_cols += ['主力動向', '投信(張)', '外資(張)']
     if '地雷分' in row.columns: base_cols += ['地雷分', '風險細節']
 
@@ -606,7 +648,7 @@ def display_single_stock_search(df, target_code):
 
 # --- 主程式 ---
 def main():
-    st.title("⚔️ V32 戰情室 (Scout Mode)")
+    st.title("⚔️ V32 戰情室 (Sniper Mode)")
     market = get_market_status()
     if market:
         c1, c2, c3 = st.columns([2, 1, 1])
@@ -794,8 +836,8 @@ def main():
                     '損益': pl, 
                     '報酬率%': roi, 
                     '攻擊分': sc, 
-                    'ADX': adx_val,       # 新增
-                    '乖離率': bias_val,   # 新增
+                    'ADX': adx_val,       
+                    '乖離率': bias_val,   
                     '建議操作': action
                 })
             
