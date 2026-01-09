@@ -144,7 +144,7 @@ def load_data_from_github():
     except Exception as e:
         return pd.DataFrame()
 
-# --- V32 運算邏輯 (修改版：1-2周短線狙擊模式) ---
+# --- V32 運算邏輯 (Sniper Mode + 坡度計算) ---
 def calculate_v32_score(df_group):
     if len(df_group) < 30: return None 
     df = df_group.sort_values('Date').reset_index(drop=True)
@@ -156,13 +156,13 @@ def calculate_v32_score(df_group):
     vol = df['TradeVolume']
     open_p = df['OpeningPrice']
     
-    # 1. 計算均線 (新增 MA10, 強調 MA5)
+    # 1. 計算均線
     ma5 = close.rolling(5).mean()
     ma10 = close.rolling(10).mean()
     ma20 = close.rolling(20).mean()
     ma60 = close.rolling(60).mean()
     
-    # 2. 計算 ADX (維持原樣)
+    # 2. 計算 ADX
     df['tr0'] = abs(high - low)
     df['tr1'] = abs(high - close.shift(1))
     df['tr2'] = abs(low - close.shift(1))
@@ -185,13 +185,11 @@ def calculate_v32_score(df_group):
     adx = dx.ewm(alpha=1/14, adjust=False).mean() 
     
     # --- 3. 新增：計算 KD (Stochastic Oscillator) ---
-    # 9日 RSV
     low_9 = low.rolling(9).min()
     high_9 = high.rolling(9).max()
     rsv = (close - low_9) / (high_9 - low_9) * 100
     rsv = rsv.fillna(50)
     
-    # 計算 K, D (平滑參數設為 3)
     k_vals = [50]
     d_vals = [50]
     for r in rsv.iloc[1:]:
@@ -215,63 +213,81 @@ def calculate_v32_score(df_group):
     
     if pd.isna(c_now) or c_now == 0 or pd.isna(m20_now) or pd.isna(adx_now): return None
 
-    # 計算乖離率 (短線看與 20MA 的乖離)
+    # --- 5. 計算坡度 (Slope) ---
+    # 用於判斷均線與指標的「方向性」
+    slope_ma20 = m20_now - ma20.iloc[i-3] # 看3天前的變化，過濾雜訊，確保大趨勢向上
+    slope_ma5 = m5_now - ma5.iloc[i-1]    # 看昨天的變化，反應靈敏
+    slope_adx = adx_now - adx.iloc[i-1]   # ADX 趨勢增強中
+
+    # 計算乖離率
     bias_percentage = (c_now - m20_now) / m20_now * 100
 
     # ==========================================
-    # 判定濾網狀態 (針對 1-2 周短線調整)
+    # 判定濾網狀態 (Sniper Mode + 坡度過濾)
     # ==========================================
     filter_pass = True
     filter_msg = "通過"
 
-    # 短線動能：ADX 門檻提高到 25，確保趨勢已經發動
     if adx_now <= 25: 
         filter_pass = False
         filter_msg = "動能不足(ADX<25)"
-    # 短線保護：股價必須在 20MA 之上，且 5MA 至少大於 20MA
+    # 新增坡度保護：如果 20MA 下彎且角度明顯，即使站上也不算數
+    elif slope_ma20 < 0:
+        filter_pass = False
+        filter_msg = "趨勢下彎(MA20)"
     elif c_now < m20_now or m5_now < m20_now:
         filter_pass = False
         filter_msg = "趨勢偏弱"
-    elif bias_percentage >= 20: # 短線過熱保護
+    elif bias_percentage >= 20: 
         filter_pass = False
         filter_msg = "短線過熱"
 
     # --- 計算技術分 (Technical Score) ---
-    # 重點：強調短期均線與 KD 黃金交叉
     t_score = 0
     
-    # 均線多頭排列 (短線極強)
-    if c_now > m5_now and m5_now > m10_now > m20_now: t_score += 30
+    # 1. 均線多頭排列
+    if c_now > m5_now and m5_now > m10_now > m20_now: t_score += 20
     elif c_now > m5_now: t_score += 10
     
-    # KD 指標判定 (短線核心)
-    if k_now > d_now: # K大於D (黃金交叉狀態)
-        if 20 < k_now < 80: t_score += 20 # 最精華路段
-        elif k_now >= 80: t_score += 10   # 高檔鈍化
+    # 2. 坡度加分 (New!)
+    # 確保買在上升段，而非盤整段
+    if slope_ma20 > 0: t_score += 10        # 生命線向上
+    if slope_ma5 > 0:                       # 攻擊線向上
+        t_score += 10
+        if slope_ma5 > (c_now * 0.005):     # 攻擊線陡峭 (噴出中)
+            t_score += 5
     
-    # ADX 強度加分
-    if adx_now > 30: t_score += 15
-    if plus_di.iloc[i] > minus_di.iloc[i]: t_score += 15
+    # 3. KD 指標判定
+    if k_now > d_now: 
+        if 20 < k_now < 80: t_score += 20   # 精華路段
+        elif k_now >= 80: t_score += 10     # 高檔鈍化
     
-    # RSI (輔助)
+    # 4. ADX 強度與坡度加分
+    # 只有當 ADX > 25 且「正在變大」時才給高分
+    if adx_now > 25:
+        if slope_adx > 0: t_score += 15     # 趨勢增強中 (Best)
+        else: t_score += 5                  # 趨勢強但轉弱
+        
+    if plus_di.iloc[i] > minus_di.iloc[i]: t_score += 10
+    
+    # 5. RSI
     delta = close.diff()
     gain, loss = (delta.where(delta > 0, 0)).rolling(14).mean(), (-delta.where(delta < 0, 0)).rolling(14).mean()
     rsi = 100 - (100 / (1 + (gain / loss)))
-    if rsi.iloc[i] > 60: t_score += 20 # RSI > 60 代表進入攻擊區
+    if rsi.iloc[i] > 60: t_score += 15
 
     # --- 計算量能分 (Volume Score) ---
-    # 短線極度依賴量能
     vol_ma5 = vol.rolling(5).mean()
     vol_ma20 = vol.rolling(20).mean()
     v_now = vol.iloc[i]
     
     v_score = 0
-    if v_now > vol_ma5.iloc[i]: v_score += 30      # 攻擊量
-    if v_now > vol_ma20.iloc[i]: v_score += 20     # 大於月均量
-    if v_now > vol.iloc[i-1]: v_score += 20        # 增量
-    if c_now > open_p.iloc[i]: v_score += 30       # 紅K棒
+    if v_now > vol_ma5.iloc[i]: v_score += 30      
+    if v_now > vol_ma20.iloc[i]: v_score += 20     
+    if v_now > vol.iloc[i-1]: v_score += 20        
+    if c_now > open_p.iloc[i]: v_score += 30       
 
-    # 最終分數權重調整：量能權重提升至 40% (短線量先價行)
+    # 最終分數權重：技術 60% + 量能 40%
     final_score = (min(100, t_score) * 0.6) + (min(100, v_score) * 0.4)
     
     return {
@@ -281,7 +297,7 @@ def calculate_v32_score(df_group):
         '收盤': c_now,
         '20MA': m20_now,
         'ADX': adx_now,
-        'KD': f"K{int(k_now)}", # 顯示 K 值供參考
+        'KD': f"K{int(k_now)}", 
         '乖離率': bias_percentage,
         'filter_pass': filter_pass,
         'filter_msg': filter_msg 
@@ -312,10 +328,9 @@ def process_data():
             res.update({'代號': code, '名稱': group['Name'].iloc[-1]})
             results.append(res)
     
-    full_df = pd.DataFrame(results) # 包含所有計算結果 (含被過濾的)
+    full_df = pd.DataFrame(results) 
     
     if not full_df.empty:
-        # v32_df 只保留通過濾網的，給 Tab 1 & 2 使用
         v32_df = full_df[full_df['filter_pass'] == True].copy()
     else:
         v32_df = pd.DataFrame()
@@ -513,18 +528,17 @@ def save_holdings(df):
         repo.update_file(contents.path, f"Update {get_taiwan_time_iso()}", csv_content, contents.sha)
     except: pass
 
-# --- Tab 1 & 2 表格渲染 (放寬顯示門檻: 60分以上) ---
+# --- Tab 1 & 2 表格渲染 ---
 def display_v32_tables(df, price_limit, suffix):
-    # 修改點：這裡將顯示門檻從 80 降為 60，讓 B 級股也能顯示
     filtered = df[(df['收盤'] <= price_limit) & (df['攻擊分'] >= 60)].sort_values('攻擊分', ascending=False)
     
     if filtered.empty: 
-        st.warning("目前無符合標準 (ADX>25 & 乖離合理) 的標的，建議空手觀望。")
+        st.warning("目前無符合標準 (ADX>25 & 趨勢向上) 的標的，建議空手觀望。")
         return
 
     df_s_pre = filtered[(filtered['攻擊分'] >= 90)].head(10)
     df_a_pre = filtered[(filtered['攻擊分'] >= 80) & (filtered['攻擊分'] < 90)].head(10)
-    df_b_pre = filtered[(filtered['攻擊分'] >= 60) & (filtered['攻擊分'] < 80)].head(10) # 新增 B 級
+    df_b_pre = filtered[(filtered['攻擊分'] >= 60) & (filtered['攻擊分'] < 80)].head(10) 
     target_codes = pd.concat([df_s_pre, df_a_pre, df_b_pre])['代號'].tolist()
 
     c_scan, c_risk, c_update, c_info = st.columns([1, 1, 1, 1.5])
@@ -573,7 +587,6 @@ def display_v32_tables(df, price_limit, suffix):
     filtered['即時價'] = filtered['即時價'].fillna(filtered['收盤'])
 
     base_cols = ['代號','名稱','即時價','技術分','量能分','攻擊分']
-    # 新增 KD 顯示
     if 'KD' in filtered.columns: base_cols.append('KD')
     if 'ADX' in filtered.columns: base_cols.append('ADX')
     if '乖離率' in filtered.columns: base_cols.append('乖離率')
@@ -586,7 +599,7 @@ def display_v32_tables(df, price_limit, suffix):
     for title, score_range in [
         ("👑 S 級主力區 (90分以上)", (90, 100)),
         ("🚀 A 級蓄勢區 (80-90分)", (80, 90)),
-        ("👀 B 級觀察區 (60-80分)", (60, 80)) # 新增
+        ("👀 B 級觀察區 (60-80分)", (60, 80)) 
     ]:
         st.subheader(title)
         sub = filtered[(filtered['攻擊分'] >= score_range[0]) & (filtered['攻擊分'] < score_range[1] + 0.1)].head(10)
